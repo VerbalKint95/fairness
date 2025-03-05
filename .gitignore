@@ -1,0 +1,10 @@
+# Fichiers NumPy et pickle
+*.npy
+*.pkl
+
+# Dossier de l'environnement virtuel Python
+env/
+
+# Images PNG
+*.png
+
