@@ -109,7 +109,3 @@ python script/fairness.py
 ```
 
 ---
-
-## Conclusion
-
-This project aims to predict crime scores while considering biases in sensitive attributes, such as race and ethnicity. The use of **PCA** for dimensionality reduction helps handle complex data and improve model performance. At the same time, **AIF360** is used to detect and mitigate biases in the model's predictions, ensuring fairness across protected groups.
