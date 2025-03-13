@@ -13,3 +13,5 @@ aif360[Reductions]
 aif360[inFairness]
 tensorflow
 fairlearn
+scikit-learn
+smogn

@@ -66,6 +66,10 @@ Here’s the directory and file structure of the project:
 ├── models/                         # Contains trained models
 │   └── best_xgboost_model.pkl      # Optimized XGBoost model
 │
+├── saves/
+│   └── *.png                       # Diagram for visualization of fairness
+│
+│
 ├── requirements.txt                # Project dependencies
 └── README.md                       # Project documentation
 ```
