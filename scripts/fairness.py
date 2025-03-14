@@ -6,8 +6,12 @@ from aif360.datasets import StandardDataset
 from aif360.metrics import BinaryLabelDatasetMetric
 from sklearn.metrics import mean_squared_error, r2_score
 from aif360.algorithms.preprocessing import Reweighing
+from aif360.algorithms.postprocessing import CalibratedEqOddsPostprocessing
 from xgboost import XGBRegressor
 
+
+def isFavorable(value):
+    return 1 if value < 0.50 else 0
 
 def load_data():
     """
@@ -55,8 +59,7 @@ def evaluate_prediction(y_true, y_pred):
     print(f"➡ RMSE: {rmse:.4f}")
     print(f"➡ R²: {r2:.4f}")
 
-
-def  evaluate_model(model, model_name, X_test, y_test, X_train=None, y_train=None):
+def evaluate_model(model, model_name, X_test, y_test, X_train=None, y_train=None):
     """
     Évalue le modèle en affichant le RMSE et le R².
     """
@@ -76,25 +79,26 @@ def  evaluate_model(model, model_name, X_test, y_test, X_train=None, y_train=Non
         evaluate_prediction(y_train, y_pred_train)
         print("=" * 40)
 
-#def evaluate_fairness(y_test, y_pred, X_sensitive_test, model_name):
-def evaluate_fairness(y_pred, X_sensitive_test, model_name):
+def evaluate_fairness(y_pred, X_sensitive_test, model_name, y_test):
     """
     Calculer les métriques de fairness pour plusieurs attributs sensibles.
     """
 
-     # Convertir les prédictions et les étiquettes en DataFrame
+    # Convertir les prédictions et les étiquettes en DataFrame
     y_pred_df = pd.DataFrame(y_pred, columns=['predictions'])
-    #y_test_df = pd.DataFrame(y_test, columns=['true_labels'])
 
-    def isFavorable(value):
-        return 1 if value < 0.50 else 0
-
-    y_pred_df = y_pred_df.map(isFavorable)
-    #y_test_df = y_test_df.map(isFavorable)
-
+    # Convertir les probabilités en classes binaires (0 ou 1)
+    y_pred_df['predictions'] = y_pred_df['predictions'].map(isFavorable)
     
+    # Convertir y_test (qui est aussi une probabilité) en classe binaire
+    y_test_df = pd.DataFrame(y_test, columns=['true_labels'])
+    y_test_df['true_labels'] = y_test_df['true_labels'].map(isFavorable)
+
+    # Calculer l'accuracy
+    accuracy = np.mean(y_pred_df['predictions'] == y_test_df['true_labels'])
+    print(f"Accuracy: {accuracy:.4f}")
+
     # Créer un DataFrame combiné avec les prédictions, étiquettes et attributs sensibles
-    #combined_df = pd.concat([y_test_df, y_pred_df, pd.DataFrame(X_sensitive_test)], axis=1)
     combined_df = pd.concat([y_pred_df, pd.DataFrame(X_sensitive_test)], axis=1)
     
     # Liste des attributs sensibles
@@ -109,11 +113,11 @@ def evaluate_fairness(y_pred, X_sensitive_test, model_name):
 
         # Créer un dataset AIF360 (StandardDataset)
         dataset = StandardDataset(
-            combined_df,                                    #dataframe
-            label_name='predictions',                       #colonne avec les bons résultats
-            favorable_classes=[1],         #condition pour que le résultat soit favorable, indice de criminalité <30%
-            protected_attribute_names=[sensitive_attribute],#colonne protégée
-            privileged_classes=[[1]],                       #condition pour être privilégié
+            combined_df,                                    # dataframe
+            label_name='predictions',                       # colonne avec les bons résultats
+            favorable_classes=[1],                          # condition pour que le résultat soit favorable
+            protected_attribute_names=[sensitive_attribute],# colonne protégée
+            privileged_classes=[[1]],                       # condition pour être privilégié
         )
 
         # Calcul des métriques de fairness
@@ -132,12 +136,12 @@ def evaluate_fairness(y_pred, X_sensitive_test, model_name):
 
         # Afficher les résultats des métriques de fairness
         print(f"Fairness Metrics pour l'attribut {sensitive_attribute}:")
-        print(f"Disparate Impact: {metric.disparate_impact()}")
-        print(f"Mean Difference: {metric.mean_difference()}")
-        print(f"Statistical Parity Difference: {metric.statistical_parity_difference()}")
+        print(f"Disparate Impact: {disparate_impact}")
+        print(f"Mean Difference: {mean_difference}")
+        print(f"Statistical Parity Difference: {stat_parity_difference}")
         print("-" * 50)
-
-         # Création des graphiques
+    
+    # Création des graphiques
 
     # 1. Disparate Impact
     plt.figure(figsize=(8, 6))
@@ -174,14 +178,11 @@ def evaluate_fairness(y_pred, X_sensitive_test, model_name):
 
     print("Les graphiques ont été enregistrés dans le dossier 'save/'.")
 
-
 def debias_by_reweight_and_train(X_train, y_train, X_sensitive_train):
 
     # Convertir en DataFrame pour AIF360
     y_train_df = pd.DataFrame(y_train, columns=['true_labels'])
 
-    def isFavorable(value):
-        return 1 if value < 0.50 else 0
 
     y_train_df = y_train_df.map(isFavorable)
 
@@ -209,17 +210,21 @@ def debias_by_reweight_and_train(X_train, y_train, X_sensitive_train):
     joblib.dump(debiased_model, 'models/debiased_xgboost_model.pkl')
     return debiased_model
 
-
+def postprocess_fairness(dataset, y_pred):
+    eq_odds = CalibratedEqOddsPostprocessing(
+        privileged_groups=[{'racepctblack': 1}],
+        unprivileged_groups=[{'racepctblack': 0}],
+        seed=42
+    )
+    y_pred_binary = np.vectorize(isFavorable)(y_pred)
+    dataset_pred = dataset.copy()
+    dataset_pred.labels = y_pred_binary
+    dataset_transformed = eq_odds.fit_predict(dataset, dataset_pred)
+    return dataset_transformed.labels
 
 def main():
     # Charger les données
     X_train, X_test, y_train, y_test, X_sensitive_train, X_sensitive_test = load_data()
-    '''
-    X_sensitive_train['racePctWhite'] = 1 - X_sensitive_train['racePctWhite']
-    X_sensitive_test['racePctWhite'] = 1 - X_sensitive_test['racePctWhite']
-    X_sensitive_train['racePctAsian'] = 1 - X_sensitive_train['racePctAsian']
-    X_sensitive_test['racePctAsian'] = 1 - X_sensitive_test['racePctAsian']'
-    '''
 
     # Charger le meilleur modèle
     model = load_model("best_xgboost_model")
@@ -232,16 +237,24 @@ def main():
 
     # Évaluer la fairness du modèle
     print("Évaluation de la fairness du modèle :")
-    evaluate_fairness(y_pred, X_sensitive_test, "original")
+    evaluate_fairness(y_pred, X_sensitive_test, "original", y_test)
 
      # Appliquer le débiaisage et réentraîner le modèle
     debiased_model = debias_by_reweight_and_train(X_train, y_train, X_sensitive_train)
     y_pred_debiased = debiased_model.predict(X_test)
 
-    # Évaluer la performance du modèle
+    # Évaluer la performance du modèle après reweight
     evaluate_model(debiased_model, "debiased_model", X_test, y_test)
-    evaluate_fairness(y_pred_debiased, X_sensitive_test, "debiased")
-
+    evaluate_fairness(y_pred_debiased, X_sensitive_test, "debiased", y_test)
+    
+    # Évaluer la performance du modèle après post process
+    dataset_test = StandardDataset(pd.concat([pd.DataFrame(y_test, columns=['true_labels']), X_sensitive_test], axis=1),
+                                   label_name='true_labels',
+                                   favorable_classes=[1],
+                                   protected_attribute_names=['racepctblack', 'racePctWhite', 'racePctHisp'],
+                                   privileged_classes=[[1]])
+    y_pred_postprocessed = postprocess_fairness(dataset_test, y_pred_debiased)
+    evaluate_fairness(y_pred_postprocessed, X_sensitive_test, "postprocessed", y_test)
 
 if __name__ == "__main__":
     main()
